@@ -23,9 +23,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install kivy kivymd plyer pyinstaller
 
-    - name: Build with PyInstaller
+    - name: Build with PyInstaller Spec
       run: |
-        pyinstaller --noconfirm --onedir --windowed --hidden-import=kivymd main.py
+        pyinstaller main.spec
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
