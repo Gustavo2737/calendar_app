@@ -24,10 +24,10 @@ jobs:
 
     - name: Build with PyInstaller
       run: |
-        pyinstaller --name "PlannerSmart" --onefile --windowed --exclude-module matplotlib --exclude-module numpy --exclude-module PIL --exclude-module tkinter main.py
+        pyinstaller --noconfirm --onedir --windowed --collect-all kivy --collect-all kivymd main.py
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
       with:
         name: PlannerSmart-Windows
-        path: dist/PlannerSmart.exe
+        path: dist/PlannerSmart/
