@@ -1,6 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-from kivy_deps import dep_util
-from kivymd import platform_app
 
 block_cipher = None
 
@@ -9,7 +7,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['kivymd', 'plyer.platforms.win'],
+    hiddenimports=['kivymd', 'plyer.platforms.win', 'kivy_deps'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -45,7 +43,6 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    *[Tree(p) for p in (dep_util.collect_data_files())],
     strip=False,
     upx=False,
     upx_exclude=[],
