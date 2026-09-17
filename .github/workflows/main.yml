@@ -32,3 +32,4 @@ jobs:
         name: PlannerSmart-Windows
         path: dist/PlannerSmart.exe
 
+
