@@ -4,62 +4,46 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.card import MDCard
-from kivymd.uix.selectioncontrol import MDCheckbox
-from kivymd.uix.button import MDIconButton
+from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.app import MDApp
-from database.repositories.task_repository import TaskRepository
+from database.connection import get_connection
 
 class DayDetailScreen(MDScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.repo = TaskRepository()
-        self.data_alvo = ""
-
-        self.main_layout = MDBoxLayout(orientation="vertical", padding=40, spacing=20)
-        self.main_layout.md_bg_color = (0.07, 0.07, 0.07, 1)
+        layout = MDBoxLayout(orientation="vertical", padding=dp(20), spacing=dp(15), md_bg_color=(0.07, 0.07, 0.07, 1))
         
-        top_bar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=10)
-        btn_back = MDIconButton(icon="arrow-left", on_release=lambda x: setattr(MDApp.get_running_app().sm, 'current', 'calendar_screen'), theme_icon_color="Custom", icon_color=(0.0, 0.9, 0.46, 1))
-        self.titulo = MDLabel(text="Detalhes", font_style="Headline", role="small", bold=True, theme_text_color="Custom", text_color=(1, 1, 1, 1))
+        self.title_lbl = MDLabel(text="Detalhes do Dia", font_style="Headline", bold=True, size_hint_y=None, height=dp(40), theme_text_color="Custom", text_color=(1,1,1,1))
+        layout.add_widget(self.title_lbl)
         
-        top_bar.add_widget(btn_back)
-        top_bar.add_widget(self.titulo)
-        self.main_layout.add_widget(top_bar)
+        btn_voltar = MDButton(MDButtonText(text="Voltar ao Calendário"), style="outlined", on_release=lambda x: setattr(MDApp.get_running_app().sm, 'current', 'calendar_screen'))
+        layout.add_widget(btn_voltar)
         
         scroll = MDScrollView()
-        self.task_list = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=15)
+        self.task_list = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=dp(10))
         scroll.add_widget(self.task_list)
-        self.main_layout.add_widget(scroll)
-        self.add_widget(self.main_layout)
+        layout.add_widget(scroll)
+        
+        self.add_widget(layout)
 
     def carregar_data(self, data_str):
-        self.data_alvo = data_str
-        self.titulo.text = f"Agenda: {data_str}"
-        self.atualizar_lista()
-
-    def atualizar_lista(self):
+        self.title_lbl.text = f"Atividades em {data_str}"
         self.task_list.clear_widgets()
-        tarefas = self.repo.get_tasks_by_date(self.data_alvo)
-        
-        if not tarefas:
-            self.task_list.add_widget(MDLabel(text="Nenhum evento único para esta data.", halign="center", theme_text_color="Custom", text_color=(0.6, 0.6, 0.6, 1), size_hint_y=None, height=dp(60)))
-            return
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT title, due_time FROM tasks WHERE due_date = ?", (data_str,))
+            rows = cur.fetchall()
+            conn.close()
             
-        for t in tarefas:
-            card = MDCard(orientation="horizontal", size_hint_y=None, height=dp(80), padding=15, spacing=15, style="elevated", md_bg_color=(0.11, 0.11, 0.11, 1), radius=[dp(12)])
-            chk = MDCheckbox(active=bool(t.is_completed), size_hint=(None, None), size=(dp(48), dp(48)))
-            chk.bind(active=lambda inst, val, task=t: self.toggle_status(task, val))
-            
-            textos = MDBoxLayout(orientation="vertical")
-            display = f"[s]{t.title}[/s]" if t.is_completed else t.title
-            textos.add_widget(MDLabel(text=display, bold=True, markup=True, theme_text_color="Custom", text_color=(1, 1, 1, 1) if not t.is_completed else (0.5, 0.5, 0.5, 1)))
-            textos.add_widget(MDLabel(text=f"Horário: {t.get_formatted_time()}", theme_text_color="Custom", text_color=(0.7, 0.7, 0.7, 1), role="small"))
-            
-            card.add_widget(chk)
-            card.add_widget(textos)
-            self.task_list.add_widget(card)
-
-    def toggle_status(self, task, is_active):
-        task.is_completed = 1 if is_active else 0
-        self.repo.update_task(task)
-        self.atualizar_lista()
+            if not rows:
+                self.task_list.add_widget(MDLabel(text="Nenhuma atividade neste dia.", theme_text_color="Custom", text_color=(0.6,0.6,0.6,1)))
+                return
+                
+            for title, due_time in rows:
+                t_str = f"{due_time//60:02d}:{due_time%60:02d}" if due_time is not None else "Dia Inteiro"
+                card = MDCard(orientation="horizontal", size_hint_y=None, height=dp(60), padding=dp(10), md_bg_color=(0.12,0.12,0.12,1), radius=[dp(8)])
+                card.add_widget(MDLabel(text=f"{title} ({t_str})", theme_text_color="Custom", text_color=(1,1,1,1)))
+                self.task_list.add_widget(card)
+        except Exception as e:
+            pass

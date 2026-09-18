@@ -1,22 +1,18 @@
-from kivy.uix.popup import Popup
+import calendar
+from datetime import datetime, timedelta
 from kivy.metrics import dp
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.scrollview import ScrollView
-
+from kivy.uix.popup import Popup
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.label import MDLabel
-from kivymd.uix.textfield import MDTextField, MDTextFieldHintText
-from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from kivymd.uix.scrollview import MDScrollView
+from kivymd.uix.card import MDCard
+from kivymd.uix.textfield import MDTextField
 from kivymd.uix.selectioncontrol import MDSwitch
-from kivymd.uix.pickers import MDModalDatePicker
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.app import MDApp
-
-from database.repositories.task_repository import TaskRepository
-from models.task_model import Task 
+from database.connection import get_connection
 from core.logger import get_logger
 
 logger = get_logger("TaskScreen")
@@ -24,196 +20,305 @@ logger = get_logger("TaskScreen")
 class TaskScreen(MDScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.repo = TaskRepository() 
-        self.dias_selecionados = []
-        self.raw_minutes = None
-        self.is_routine_mode = False 
-        self.temp_hour = None
-        self.time_popup = None
+        self.selected_routine_days = set()
+        self.day_buttons = {}
+        
+        now = datetime.now()
+        self.year = now.year
+        self.month = now.month
+        self.selected_date = now.strftime('%Y-%m-%d')
+        
+        self.selected_hour = now.hour
+        self.selected_minute = (now.minute // 5) * 5
+        
+        root_layout = MDBoxLayout(orientation="vertical", padding=dp(30), spacing=dp(15), md_bg_color=(0.07, 0.07, 0.07, 1))
+        
+        root_layout.add_widget(MDLabel(
+            text="Cadastro de Nova Atividade / Rotina", 
+            font_style="Headline", 
+            bold=True, 
+            size_hint_y=None, 
+            height=dp(40), 
+            theme_text_color="Custom", 
+            text_color=(1, 1, 1, 1)
+        ))
+        
+        scroll = MDScrollView()
+        
+        self.form_layout = MDBoxLayout(
+            orientation="vertical", 
+            adaptive_height=True, 
+            spacing=dp(18),
+            size_hint_x=None,
+            width=dp(600),
+            pos_hint={"center_x": 0.5}
+        )
+        
+        # Seção 1: Informações Principais
+        sec1 = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
+        sec1.add_widget(MDLabel(text="Título da Atividade", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
+        
+        self.title_input = MDTextField(hint_text="Ex: Estudar Matemática, Ir à academia...", mode="outlined")
+        sec1.add_widget(self.title_input)
+        self.form_layout.add_widget(sec1)
+        
+        # Seção 2: Tipo de Compromisso (Interruptor)
+        sec2 = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
+        sec2.add_widget(MDLabel(text="Tipo de Compromisso", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
+        
+        switch_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40), spacing=dp(15))
+        self.routine_switch = MDSwitch()
+        self.routine_switch.bind(active=self.on_routine_switch_active)
+        switch_box.add_widget(self.routine_switch)
+        switch_box.add_widget(MDLabel(text="Ativar Rotina Semanal Recorrente", theme_text_color="Custom", text_color=(1, 1, 1, 1)))
+        sec2.add_widget(switch_box)
+        self.form_layout.add_widget(sec2)
+        
+        # Seção 3: Calendário Visual Integrado
+        self.sec_date = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
+        
+        date_header_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(35))
+        date_header_box.add_widget(MDLabel(text="Data do Compromisso", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
+        self.lbl_current_date_selection = MDLabel(text=f"Selecionado: {self.selected_date}", halign="right", theme_text_color="Custom", text_color=(0.8, 0.8, 0.8, 1), role="small")
+        date_header_box.add_widget(self.lbl_current_date_selection)
+        self.sec_date.add_widget(date_header_box)
+        
+        nav_month_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40), spacing=dp(10))
+        btn_prev_m = MDIconButton(icon="chevron-left", theme_icon_color="Custom", icon_color=(0, 0.9, 0.46, 1))
+        btn_prev_m.bind(on_release=lambda x: self.change_month(-1))
+        nav_month_box.add_widget(btn_prev_m)
+        
+        self.lbl_month_year = MDLabel(text="", halign="center", bold=True, theme_text_color="Custom", text_color=(1, 1, 1, 1))
+        nav_month_box.add_widget(self.lbl_month_year)
+        
+        btn_next_m = MDIconButton(icon="chevron-right", theme_icon_color="Custom", icon_color=(0, 0.9, 0.46, 1))
+        btn_next_m.bind(on_release=lambda x: self.change_month(1))
+        nav_month_box.add_widget(btn_next_m)
+        self.sec_date.add_widget(nav_month_box)
+        
+        days_header_grid = MDGridLayout(cols=7, size_hint_y=None, height=dp(30), spacing=dp(4))
+        for d_name in ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]:
+            days_header_grid.add_widget(MDLabel(text=d_name, halign="center", bold=True, theme_text_color="Custom", text_color=(0.6, 0.6, 0.6, 1), role="small"))
+        self.sec_date.add_widget(days_header_grid)
+        
+        self.calendar_grid = MDGridLayout(cols=7, adaptive_height=True, spacing=dp(6))
+        self.sec_date.add_widget(self.calendar_grid)
+        
+        self.form_layout.add_widget(self.sec_date)
+        self.build_mini_calendar()
+        
+        # Seção 4: Horário
+        sec4 = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
+        sec4.add_widget(MDLabel(text="Horário do Compromisso", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
+        
+        time_display_box = MDCard(orientation="horizontal", size_hint_y=None, height=dp(55), padding=dp(15), spacing=dp(15), md_bg_color=(0.17, 0.17, 0.17, 1), radius=[dp(10)])
+        time_display_box.bind(on_release=self.open_time_picker_popup)
+        time_display_box.add_widget(MDIconButton(icon="clock-outline", theme_icon_color="Custom", icon_color=(0, 0.9, 0.46, 1)))
+        self.lbl_time_display = MDLabel(text=f"Horário selecionado: {self.selected_hour:02d}:{self.selected_minute:02d}", bold=True, theme_text_color="Custom", text_color=(1, 1, 1, 1))
+        time_display_box.add_widget(self.lbl_time_display)
+        sec4.add_widget(time_display_box)
+        self.form_layout.add_widget(sec4)
+        
+        # Seção 5: Seleção de Dias da Semana (Rotina) - Usando inserção/remoção dinâmica correta para evitar vãos
+        self.sec_days = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
+        self.sec_days.add_widget(MDLabel(text="Dias da Semana da Rotina (Clique para Selecionar)", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
+        
+        days_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=dp(8))
+        self.dias_mapeamento = {"Dom": "Domingo", "Seg": "Segunda-feira", "Ter": "Terça-feira", "Qua": "Quarta-feira", "Qui": "Quinta-feira", "Sex": "Sexta-feira", "Sáb": "Sábado"}
+        for d_key in ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]:
+            btn = MDButton(MDButtonText(text=d_key), style="outlined", radius=[dp(15)])
+            btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+            btn.bind(on_release=lambda x, dk=d_key: self.toggle_day(dk))
+            self.day_buttons[d_key] = btn
+            days_box.add_widget(btn)
+        self.sec_days.add_widget(days_box)
+        
+        # Botão Salvar
+        btn_save = MDButton(MDButtonText(text="Salvar Atividade"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(50))
+        btn_save.bind(on_release=self.save_task)
+        self.form_layout.add_widget(btn_save)
+        
+        scroll.add_widget(self.form_layout)
+        root_layout.add_widget(scroll)
+        self.add_widget(root_layout)
 
-        main_layout = MDBoxLayout(orientation="vertical", padding=40, spacing=25)
-        main_layout.md_bg_color = (0.07, 0.07, 0.07, 1) # #121212
+    def build_mini_calendar(self):
+        self.calendar_grid.clear_widgets()
+        month_names = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        self.lbl_month_year.text = f"{month_names[self.month]} {self.year}"
         
-        main_layout.add_widget(MDLabel(text="Cadastrar Nova Atividade", font_style="Headline", role="small", bold=True, size_hint_y=None, height=dp(40), theme_text_color="Custom", text_color=(1, 1, 1, 1)))
-        
-        self.text_field = MDTextField(MDTextFieldHintText(text="O que você precisa fazer? *"), mode="outlined")
-        main_layout.add_widget(self.text_field)
-        
-        # TOGGLE VISUALMENTE DESTACADO
-        toggle_card = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=15, padding=[15, 5, 15, 5], md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(12)])
-        self.lbl_mode = MDLabel(text="MODO: Evento Único", bold=True, theme_text_color="Custom", text_color=(0.0, 0.9, 0.46, 1))
-        self.switch_mode = MDSwitch(active=False)
-        self.switch_mode.bind(active=self.on_switch_mode)
-        toggle_card.add_widget(self.lbl_mode)
-        toggle_card.add_widget(self.switch_mode)
-        main_layout.add_widget(toggle_card)
-        
-        self.dynamic_container = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=15)
-        
-        # CONTAINER: EVENTO ÚNICO
-        self.event_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=15)
-        self.date_field = MDTextField(MDTextFieldHintText(text="Data Específica (Selecione no ícone)"), mode="outlined", readonly=True, size_hint_x=0.8)
-        btn_date = MDIconButton(icon="calendar", on_release=self.open_date_picker, theme_icon_color="Custom", icon_color=(0.0, 0.9, 0.46, 1))
-        self.event_box.add_widget(self.date_field)
-        self.event_box.add_widget(btn_date)
-        
-        # CONTAINER: ROTINA SEMANAL
-        self.routine_box = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=10)
-        self.routine_box.add_widget(MDLabel(text="Dias da Repetição Semanal:", size_hint_y=None, height=dp(20), theme_text_color="Custom", text_color=(0.8, 0.8, 0.8, 1)))
-        row_dias = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=5)
-        dias = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
-        self.botoes_dias = {}
-        for d in dias:
-            btn = MDButton(MDButtonText(text=d), style="outlined", on_release=self.toggle_dia, radius=[dp(8)])
-            self.botoes_dias[btn] = d
-            row_dias.add_widget(btn)
-        self.routine_box.add_widget(row_dias)
-        
-        # CONTAINER: HORÁRIO (Comum a ambos)
-        self.time_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=15)
-        self.time_field = MDTextField(MDTextFieldHintText(text="Horário (Opcional)"), mode="outlined", readonly=True, size_hint_x=0.8)
-        btn_time = MDIconButton(icon="clock-outline", on_release=self.open_time_picker_hours, theme_icon_color="Custom", icon_color=(0.0, 0.9, 0.46, 1))
-        self.time_box.add_widget(self.time_field)
-        self.time_box.add_widget(btn_time)
-        
-        self.dynamic_container.add_widget(self.event_box)
-        self.dynamic_container.add_widget(self.time_box)
-        main_layout.add_widget(self.dynamic_container)
-        
-        self.lbl_feedback = MDLabel(text="", theme_text_color="Error", size_hint_y=None, height=dp(20))
-        main_layout.add_widget(self.lbl_feedback)
-        
-        # BOTÃO SALVAR COM DESTAQUE
-        btn_salvar = MDButton(MDButtonText(text="SALVAR ATIVIDADE", bold=True), style="filled", on_release=self.add_new_task, size_hint_x=1, size_hint_y=None, height=dp(55), radius=[dp(12)])
-        btn_salvar.theme_bg_color = "Custom"
-        btn_salvar.md_bg_color = (0.0, 0.8, 0.4, 1)
-        
-        main_layout.add_widget(MDLabel()) 
-        main_layout.add_widget(btn_salvar)
-        self.add_widget(main_layout)
+        cal = calendar.monthcalendar(self.year, self.month)
+        for week in cal:
+            for day in week:
+                if day == 0:
+                    self.calendar_grid.add_widget(MDLabel(size_hint_y=None, height=dp(40)))
+                else:
+                    date_str = f"{self.year}-{self.month:02d}-{day:02d}"
+                    is_selected = (date_str == self.selected_date)
+                    
+                    btn = MDButton(
+                        MDButtonText(text=str(day)), 
+                        style="filled" if is_selected else "text", 
+                        size_hint=(None, None), 
+                        size=(dp(45), dp(40))
+                    )
+                    btn.pos_hint = {"center_x": 0.5}
+                    btn.md_bg_color = (0, 0.9, 0.46, 1) if is_selected else (0.17, 0.17, 0.17, 1)
+                    btn.bind(on_release=lambda x, ds=date_str: self.select_date(ds))
+                    self.calendar_grid.add_widget(btn)
 
-    def on_switch_mode(self, instance, active):
-        self.is_routine_mode = active
-        self.dynamic_container.clear_widgets()
-        if active:
-            self.lbl_mode.text = "MODO: Rotina Semanal"
-            self.dynamic_container.add_widget(self.routine_box)
+    def change_month(self, delta):
+        self.month += delta
+        if self.month > 12:
+            self.month = 1
+            self.year += 1
+        elif self.month < 1:
+            self.month = 12
+            self.year -= 1
+        self.build_mini_calendar()
+
+    def select_date(self, date_str):
+        self.selected_date = date_str
+        self.lbl_current_date_selection.text = f"Selecionado: {date_str}"
+        self.build_mini_calendar()
+
+    def open_time_picker_popup(self, *args):
+        content = MDBoxLayout(orientation="vertical", padding=dp(25), spacing=dp(20), md_bg_color=(0.1, 0.1, 0.1, 1), size_hint_y=None, adaptive_height=True, size_hint_x=None, width=dp(380), pos_hint={"center_x": 0.5})
+        content.add_widget(MDLabel(text="Selecionar Horário Preciso", bold=True, halign="center", theme_text_color="Custom", text_color=(1,1,1,1), size_hint_y=None, height=dp(30)))
+        
+        popup = Popup(title="Horário", size_hint=(None, None), size=(dp(420), dp(320)), content=content)
+        
+        self.time_preview_lbl = MDLabel(text=f"{self.selected_hour:02d}:{self.selected_minute:02d}", font_style="Headline", bold=True, halign="center", theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(50))
+        content.add_widget(self.time_preview_lbl)
+        
+        controls_box = MDBoxLayout(orientation="horizontal", spacing=dp(20), size_hint_y=None, height=dp(70), pos_hint={"center_x": 0.5})
+        
+        h_box = MDBoxLayout(orientation="vertical", spacing=dp(5), size_hint_y=None, height=dp(70))
+        h_box.add_widget(MDLabel(text="Hora", halign="center", theme_text_color="Custom", text_color=(0.7,0.7,0.7,1), role="small", size_hint_y=None, height=dp(20)))
+        h_ctrl = MDBoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(45))
+        
+        btn_h_sub = MDButton(MDButtonText(text="-"), style="outlined", size_hint=(None, None), size=(dp(45), dp(45)))
+        btn_h_sub.bind(on_release=lambda x: self.adjust_hour(-1))
+        
+        self.lbl_h_val = MDLabel(text=f"{self.selected_hour:02d}", halign="center", bold=True, theme_text_color="Custom", text_color=(1,1,1,1))
+        
+        btn_h_add = MDButton(MDButtonText(text="+"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint=(None, None), size=(dp(45), dp(45)))
+        btn_h_add.bind(on_release=lambda x: self.adjust_hour(1))
+        
+        h_ctrl.add_widget(btn_h_sub)
+        h_ctrl.add_widget(self.lbl_h_val)
+        h_ctrl.add_widget(btn_h_add)
+        h_box.add_widget(h_ctrl)
+        
+        m_box = MDBoxLayout(orientation="vertical", spacing=dp(5), size_hint_y=None, height=dp(70))
+        m_box.add_widget(MDLabel(text="Minuto Exato", halign="center", theme_text_color="Custom", text_color=(0.7,0.7,0.7,1), role="small", size_hint_y=None, height=dp(20)))
+        m_ctrl = MDBoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(45))
+        
+        btn_m_sub = MDButton(MDButtonText(text="-"), style="outlined", size_hint=(None, None), size=(dp(45), dp(45)))
+        btn_m_sub.bind(on_release=lambda x: self.adjust_minute(-1))
+        
+        self.lbl_m_val = MDLabel(text=f"{self.selected_minute:02d}", halign="center", bold=True, theme_text_color="Custom", text_color=(1,1,1,1))
+        
+        btn_m_add = MDButton(MDButtonText(text="+"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint=(None, None), size=(dp(45), dp(45)))
+        btn_m_add.bind(on_release=lambda x: self.adjust_minute(1))
+        
+        m_ctrl.clear_widgets()
+        m_ctrl.add_widget(btn_m_sub)
+        m_ctrl.add_widget(self.lbl_m_val)
+        m_ctrl.add_widget(btn_m_add)
+        
+        m_box.add_widget(m_ctrl)
+        
+        controls_box.add_widget(h_box)
+        controls_box.add_widget(m_box)
+        content.add_widget(controls_box)
+        
+        btn_confirm = MDButton(MDButtonText(text="Confirmar Horário"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(45))
+        btn_confirm.bind(on_release=lambda x: [
+            setattr(self.lbl_time_display, 'text', f"Horário selecionado: {self.selected_hour:02d}:{self.selected_minute:02d}"),
+            popup.dismiss()
+        ])
+        content.add_widget(btn_confirm)
+        
+        popup.open()
+
+    def adjust_hour(self, delta):
+        self.selected_hour = (self.selected_hour + delta) % 24
+        if hasattr(self, 'lbl_h_val') and self.lbl_h_val:
+            self.lbl_h_val.text = f"{self.selected_hour:02d}"
+        if hasattr(self, 'time_preview_lbl') and self.time_preview_lbl:
+            self.time_preview_lbl.text = f"{self.selected_hour:02d}:{self.selected_minute:02d}"
+
+    def adjust_minute(self, delta):
+        self.selected_minute = (self.selected_minute + delta) % 60
+        if hasattr(self, 'lbl_m_val') and self.lbl_m_val:
+            self.lbl_m_val.text = f"{self.selected_minute:02d}"
+        if hasattr(self, 'time_preview_lbl') and self.time_preview_lbl:
+            self.time_preview_lbl.text = f"{self.selected_hour:02d}:{self.selected_minute:02d}"
+
+    def on_routine_switch_active(self, switch, value):
+        if value:
+            # Remove o calendário e insere os dias da semana no lugar exato, evitando qualquer espaço gigante
+            if self.sec_date in self.form_layout.children:
+                self.form_layout.remove_widget(self.sec_date)
+            if self.sec_days not in self.form_layout.children:
+                # Inserta logo abaixo do seletor de tipo (índice 1)
+                self.form_layout.add_widget(self.sec_days)
         else:
-            self.lbl_mode.text = "MODO: Evento Único"
-            self.dynamic_container.add_widget(self.event_box)
-        self.dynamic_container.add_widget(self.time_box)
+            if self.sec_days in self.form_layout.children:
+                self.form_layout.remove_widget(self.sec_days)
+            if self.sec_date not in self.form_layout.children:
+                # Reinsere o calendário na posição correta
+                self.form_layout.add_widget(self.sec_date)
+            self.selected_routine_days.clear()
+            for d, btn in self.day_buttons.items():
+                btn.style = "outlined"
+                btn.md_bg_color = (0.17, 0.17, 0.17, 1)
 
-    def toggle_dia(self, instance):
-        dia = self.botoes_dias[instance]
-        if dia in self.dias_selecionados:
-            self.dias_selecionados.remove(dia)
-            instance.style = "outlined"
-            instance.md_bg_color = (0.15, 0.15, 0.15, 1)
+    def toggle_day(self, day_key):
+        full_name = self.dias_mapeamento[day_key]
+        btn = self.day_buttons[day_key]
+        if full_name in self.selected_routine_days:
+            self.selected_routine_days.remove(full_name)
+            btn.style = "outlined"
+            btn.md_bg_color = (0.17, 0.17, 0.17, 1)
         else:
-            self.dias_selecionados.append(dia)
-            instance.style = "filled"
-            instance.md_bg_color = (0.0, 0.9, 0.46, 1)
+            self.selected_routine_days.add(full_name)
+            btn.style = "filled"
+            btn.md_bg_color = (0, 0.9, 0.46, 1)
 
-    def open_date_picker(self, *args):
-        try:
-            dialog = MDModalDatePicker()
-            dialog.bind(on_ok=lambda inst: self.set_date_field(inst))
-            dialog.open()
-        except Exception as e:
-            logger.error(f"Erro DatePicker: {e}")
-
-    def set_date_field(self, instance_dialog):
-        self.date_field.text = instance_dialog.get_date()[0].strftime("%Y-%m-%d")
-        instance_dialog.dismiss()
-
-    def open_time_picker_hours(self, *args):
-        layout = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
-        layout.add_widget(Label(text="Selecione a Hora", size_hint_y=None, height=dp(30), bold=True))
-        scroll = ScrollView(size_hint=(1, 1))
-        grid = GridLayout(cols=4, spacing=dp(8), size_hint_y=None)
-        grid.bind(minimum_height=grid.setter('height'))
-        
-        self.time_popup = Popup(title="", separator_height=0, content=layout, size_hint=(0.85, 0.75), background_color=(0.12, 0.12, 0.12, 1))
-        for h in range(24): # 00:00 a 23:00
-            btn = Button(text=f"{h:02d}", size_hint_y=None, height=dp(50), background_color=(0, 0.7, 0.4, 1))
-            btn.bind(on_release=lambda x, hs=h: self.select_hour_and_proceed(hs))
-            grid.add_widget(btn)
-            
-        scroll.add_widget(grid)
-        layout.add_widget(scroll)
-        btn_cancel = Button(text="Limpar / Cancelar", size_hint_y=None, height=dp(45), background_color=(0.3, 0.3, 0.3, 1))
-        btn_cancel.bind(on_release=self.clear_time)
-        layout.add_widget(btn_cancel)
-        self.time_popup.open()
-
-    def clear_time(self, *args):
-        self.time_field.text = ""
-        self.raw_minutes = None
-        self.time_popup.dismiss()
-
-    def select_hour_and_proceed(self, hour_int):
-        self.temp_hour = hour_int
-        self.time_popup.dismiss()
-        self.open_time_picker_minutes()
-
-    def open_time_picker_minutes(self):
-        layout = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
-        layout.add_widget(Label(text=f"Hora: {self.temp_hour:02d} - Minutos", size_hint_y=None, height=dp(30), bold=True))
-        scroll = ScrollView(size_hint=(1, 1))
-        grid = GridLayout(cols=3, spacing=dp(8), size_hint_y=None)
-        grid.bind(minimum_height=grid.setter('height'))
-        
-        self.time_popup = Popup(title="", separator_height=0, content=layout, size_hint=(0.85, 0.75), background_color=(0.12, 0.12, 0.12, 1))
-        for m in range(0, 60, 5): # De 5 em 5 minutos
-            btn = Button(text=f"{m:02d}", size_hint_y=None, height=dp(50), background_color=(0, 0.7, 0.4, 1))
-            btn.bind(on_release=lambda x, mi=m: self.finalize_time(mi))
-            grid.add_widget(btn)
-            
-        scroll.add_widget(grid)
-        layout.add_widget(scroll)
-        btn_cancel = Button(text="Voltar", size_hint_y=None, height=dp(45), background_color=(0.3, 0.3, 0.3, 1))
-        btn_cancel.bind(on_release=self.time_popup.dismiss)
-        layout.add_widget(btn_cancel)
-        self.time_popup.open()
-
-    def finalize_time(self, minute_int):
-        self.time_field.text = f"{self.temp_hour:02d}:{minute_int:02d}"
-        self.raw_minutes = (self.temp_hour * 60) + minute_int
-        self.time_popup.dismiss()
-
-    def add_new_task(self, instance):
-        titulo = self.text_field.text.strip()
-        if not titulo:
-            self.lbl_feedback.text = "Atenção: O título não pode estar vazio!"
+    def save_task(self, *args):
+        title = self.title_input.text.strip()
+        if not title:
             return
+            
+        is_routine = 1 if self.routine_switch.active else 0
+        due_date = self.selected_date if not is_routine else None
+        due_time = (self.selected_hour * 60) + self.selected_minute
         
-        self.lbl_feedback.text = ""
-        is_routine = 1 if self.is_routine_mode else 0
-        data = None
-        rotina = None
+        # Salva os dias da semana de forma compatível com a tela de rotinas
+        recurrence_data = ", ".join(self.selected_routine_days) if is_routine and self.selected_routine_days else None
         
-        if self.is_routine_mode:
-            if not self.dias_selecionados:
-                self.lbl_feedback.text = "Selecione ao menos um dia para a rotina."
-                return
-            rotina = ", ".join(self.dias_selecionados)
-        else:
-            data = self.date_field.text.strip()
-            if not data:
-                self.lbl_feedback.text = "Selecione uma data para o evento."
-                return
-
         try:
-            self.repo.add_task(Task(title=titulo, is_routine=is_routine, due_date=data, due_time=self.raw_minutes, recurrence=rotina))
-            # Reset UI
-            self.text_field.text = ""
-            self.date_field.text = ""
-            self.time_field.text = ""
-            self.raw_minutes = None
-            self.dias_selecionados.clear()
-            for b in self.botoes_dias.keys():
-                b.style = "outlined"
-                b.md_bg_color = (0.15, 0.15, 0.15, 1)
-            MDApp.get_running_app().sm.current = "dashboard"
+            conn = get_connection()
+            conn.execute("""
+                INSERT INTO tasks (title, is_routine, due_date, due_time, recurrence_data, is_completed)
+                VALUES (?, ?, ?, ?, ?, 0)
+            """, (title, is_routine, due_date, due_time, recurrence_data))
+            conn.commit()
+            conn.close()
+            
+            # Limpeza segura
+            self.title_input.text = ""
+            self.selected_routine_days.clear()
+            for d, btn in self.day_buttons.items():
+                btn.style = "outlined"
+                btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+            self.routine_switch.active = False
+            
+            # Vai para o dashboard
+            app = MDApp.get_running_app()
+            if app and hasattr(app, 'sm'):
+                app.sm.current = "dashboard"
         except Exception as e:
-            logger.error(f"Erro Salvar: {e}")
+            logger.error(f"Erro ao salvar tarefa: {e}")
