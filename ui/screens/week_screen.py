@@ -1,140 +1,218 @@
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
-from kivymd.uix.scrollview import MDScrollView
-from kivymd.uix.card import MDCard
 from kivymd.uix.button import MDButton, MDButtonText
-from kivy.metrics import dp
-from database.connection import get_connection
-from core.logger import get_logger
+from kivymd.uix.card import MDCard
+from kivymd.uix.scrollview import MDScrollView
+from kivy.metrics import dp, sp
 from datetime import datetime, timedelta
+from core.logger import get_logger
+from database.connection import get_connection
 
 logger = get_logger("WeekScreen")
+
+# Paleta de Cores Padrão (Alto Contraste)
+COLORS = {
+    'BG': (0.07, 0.07, 0.07, 1),           # #121212
+    'CARD': (0.12, 0.12, 0.12, 1),       # #1E1E1E
+    'TEXT': (1, 1, 1, 1),                # #FFFFFF
+    'LABEL': (0.69, 0.69, 0.69, 1),      # #B0B0B0
+    'FOCUS': (0, 0.9, 0.46, 1),          # #00E676 (Verde Menta)
+    'BTN_NORMAL': (0.12, 0.12, 0.12, 1), # Fundo escuro / preto
+    'TEXT_DARK': (0, 0, 0, 1)            # Preto para fundo verde
+}
 
 class WeekScreen(MDScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.selected_day = "Segunda-feira"
-        self.day_buttons = {}
-        
-        layout = MDBoxLayout(orientation="vertical", padding=dp(20), spacing=dp(15), md_bg_color=(0.07, 0.07, 0.07, 1))
-        
-        layout.add_widget(MDLabel(text="Minha Semana (Rotinas)", font_style="Headline", bold=True, size_hint_y=None, height=dp(40), theme_text_color="Custom", text_color=(1, 1, 1, 1)))
-        
-        days_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=dp(10))
-        
-        self.dias_semana_map = {
-            "Seg": ["Segunda", "Seg"], "Ter": ["Terça", "Ter"], "Qua": ["Quarta", "Qua"],
-            "Qui": ["Quinta", "Qui"], "Sex": ["Sexta", "Sex"], "Sáb": ["Sábado", "Sáb"], "Dom": ["Domingo", "Dom"]
+        self.selected_day = "Seg"
+        self.days = [
+            ("Seg", "Segunda-feira"),
+            ("Ter", "Terça-feira"),
+            ("Qua", "Quarta-feira"),
+            ("Qui", "Quinta-feira"),
+            ("Sex", "Sexta-feira"),
+            ("Sáb", "Sábado"),
+            ("Dom", "Domingo")
+        ]
+        self.day_map_full = {
+            "Seg": "segunda",
+            "Ter": "terça",
+            "Qua": "quarta",
+            "Qui": "quinta",
+            "Sex": "sexta",
+            "Sáb": "sábado",
+            "Dom": "domingo"
         }
+        self.build_ui()
+
+    def on_enter(self, *args):
+        self.load_routines()
+
+    def build_ui(self):
+        self.clear_widgets()
+        layout = MDBoxLayout(orientation="vertical", padding=dp(20), spacing=dp(15), md_bg_color=COLORS['BG'])
         
-        for d_short, termos in self.dias_semana_map.items():
-            btn = MDButton(MDButtonText(text=d_short), style="outlined", radius=[dp(15)])
-            btn.md_bg_color = (0.12, 0.12, 0.12, 1)
-            btn.bind(on_release=lambda x, ds=d_short: self.filter_day(ds))
-            self.day_buttons[d_short] = btn
-            days_box.add_widget(btn)
+        top_bar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40))
+        top_bar.add_widget(MDLabel(
+            text="Minha Semana (Rotinas)",
+            bold=True,
+            font_style="Headline",
+            theme_text_color="Custom",
+            text_color=COLORS['TEXT']
+        ))
+        layout.add_widget(top_bar)
+        
+        days_scroll = MDScrollView(size_hint_y=None, height=dp(50), do_scroll_y=False)
+        self.days_box = MDBoxLayout(orientation="horizontal", spacing=dp(10), adaptive_width=True)
+        
+        self.day_buttons = {}
+        for short_name, full_name in self.days:
+            is_selected = (short_name == self.selected_day)
             
-        layout.add_widget(days_box)
+            bg_col = COLORS['FOCUS'] if is_selected else COLORS['BTN_NORMAL']
+            txt_col = COLORS['TEXT_DARK'] if is_selected else COLORS['FOCUS']
+            
+            btn = MDButton(
+                MDButtonText(text=short_name, theme_text_color="Custom", text_color=txt_col),
+                style="filled" if is_selected else "outlined",
+                md_bg_color=bg_col,
+                size_hint_x=None,
+                width=dp(70),
+                size_hint_y=None,
+                height=dp(42)
+            )
+            btn.bind(on_release=lambda x, s=short_name: self.select_day(s))
+            self.day_buttons[short_name] = btn
+            self.days_box.add_widget(btn)
+            
+        days_scroll.add_widget(self.days_box)
+        layout.add_widget(days_scroll)
         
-        scroll = MDScrollView()
-        self.routine_list_layout = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=dp(12))
-        scroll.add_widget(self.routine_list_layout)
-        layout.add_widget(scroll)
+        routines_scroll = MDScrollView()
+        self.routines_list_box = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=dp(12))
+        routines_scroll.add_widget(self.routines_list_box)
+        layout.add_widget(routines_scroll)
         
         self.add_widget(layout)
 
-    def on_enter(self, *args):
-        self.filter_day("Seg")
-
-    def get_time_left_str(self, is_routine, due_date, due_time, recurrence_data):
-        try:
-            if due_time is None or str(due_time).strip() == "": return ""
-            t_int = int(float(str(due_time)))
-            th, tm = t_int // 60, t_int % 60
-        except: return ""
-
-        now = datetime.now()
-        dia_map = {"seg": 0, "ter": 1, "qua": 2, "qui": 3, "sex": 4, "sáb": 5, "dom": 6}
-        if not recurrence_data: return ""
-        
-        today_idx = now.weekday()
-        target_dts = []
-        for d_name in dia_map:
-            if d_name in recurrence_data.lower():
-                days_ahead = dia_map[d_name] - today_idx
-                if days_ahead < 0 or (days_ahead == 0 and (now.hour * 60 + now.minute) >= t_int):
-                    days_ahead += 7
-                target_dts.append(now.replace(hour=th, minute=tm, second=0, microsecond=0) + timedelta(days=days_ahead))
-        
-        if not target_dts: return ""
-        target_dt = min(target_dts)
-
-        diff = target_dt - now
-        if diff.total_seconds() < 0: return "⏳ Atrasado"
-        days, rem = diff.days, diff.seconds
-        hours, rem = divmod(rem, 3600)
-        minutes, _ = divmod(rem, 60)
-        
-        if days > 0: return f"⏳ {days}d {hours}h {minutes}min"
-        elif hours > 0: return f"⏳ {hours}h {minutes}min"
-        else: return f"⏳ {minutes}min"
-
-    def filter_day(self, day_short):
+    def select_day(self, day_short):
         self.selected_day = day_short
-        for d, btn in self.day_buttons.items():
-            if d == day_short:
-                btn.style = "filled"
-                btn.md_bg_color = (0, 0.9, 0.46, 1)
-            else:
-                btn.style = "outlined"
-                btn.md_bg_color = (0.12, 0.12, 0.12, 1)
-        self.load_routines_for_day(day_short)
-
-    def load_routines_for_day(self, day_short):
-        self.routine_list_layout.clear_widgets()
-        termos_busca = self.dias_semana_map.get(day_short, [day_short])
+        logger.info(f"Dia selecionado na WeekScreen: {day_short}")
         
+        for short_name, btn in self.day_buttons.items():
+            is_selected = (short_name == day_short)
+            if is_selected:
+                btn.md_bg_color = COLORS['FOCUS']
+                btn.style = "filled"
+                if btn.children and hasattr(btn.children[0], 'text_color'):
+                    btn.children[0].text_color = COLORS['TEXT_DARK']
+            else:
+                btn.md_bg_color = COLORS['BTN_NORMAL']
+                btn.style = "outlined"
+                if btn.children and hasattr(btn.children[0], 'text_color'):
+                    btn.children[0].text_color = COLORS['FOCUS']
+                    
+        self.load_routines()
+
+    def calculate_time_remaining(self, target_day_str):
+        try:
+            now = datetime.now()
+            days_order = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+            
+            target_idx = -1
+            for idx, d in enumerate(days_order):
+                if d in target_day_str.lower():
+                    target_idx = idx
+                    break
+            
+            if target_idx == -1:
+                return "🕒 Horário regular"
+                
+            current_idx = now.weekday()
+            days_diff = (target_idx - current_idx) % 7
+            if days_diff == 0:
+                days_diff = 7
+                
+            future_time = now + timedelta(days=days_diff)
+            delta = future_time - now
+            d_val = delta.days
+            h_val = delta.seconds // 3600
+            m_val = (delta.seconds % 3600) // 60
+            
+            return f"🕒 Faltam {d_val}d {h_val}h {m_val}min"
+        except Exception:
+            return "🕒 Calculando..."
+
+    def load_routines(self):
+        self.routines_list_box.clear_widgets()
         try:
             conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, title, is_routine, due_time, recurrence_data FROM tasks WHERE is_routine = 1")
-            rows = cursor.fetchall()
-            conn.close()
+            c = conn.cursor()
             
-            match_rows = []
-            for row in rows:
-                if row[4]: 
-                    if any(termo.lower() in str(row[4]).lower() for termo in termos_busca):
-                        match_rows.append(row)
-            
-            if not match_rows:
-                empty_card = MDCard(orientation="vertical", size_hint_y=None, height=dp(80), padding=dp(20), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(12)])
-                empty_card.add_widget(MDLabel(text=f"Nenhuma rotina cadastrada para {day_short}.", halign="center", theme_text_color="Custom", text_color=(0.7, 0.7, 0.7, 1)))
-                self.routine_list_layout.add_widget(empty_card)
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+            if not c.fetchone():
+                empty_card = MDCard(orientation="vertical", size_hint_y=None, height=dp(90), padding=dp(20), md_bg_color=COLORS['CARD'], radius=[dp(12)])
+                empty_card.add_widget(MDLabel(text="Nenhuma rotina cadastrada.", halign="center", theme_text_color="Custom", text_color=COLORS['LABEL']))
+                self.routines_list_box.add_widget(empty_card)
+                conn.close()
                 return
 
-            for row in match_rows:
-                task_id, title, is_routine, due_time, recurrence_data = row
-                
-                time_str = "Horário livre"
-                if due_time is not None and str(due_time).strip() != "":
-                    try:
-                        t_int = int(float(str(due_time)))
-                        time_str = f"às {t_int//60:02d}:{t_int%60:02d}"
-                    except Exception:
-                        pass
-                        
-                timer_txt = self.get_time_left_str(is_routine, None, due_time, recurrence_data)
+            c.execute("SELECT * FROM tasks")
+            col_names = [description[0] for description in c.description]
+            rows = c.fetchall()
+            conn.close()
 
-                card = MDCard(orientation="vertical", size_hint_y=None, height=dp(95), padding=dp(15), spacing=dp(5), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(12)])
-                card.add_widget(MDLabel(text=title, bold=True, theme_text_color="Custom", text_color=(1, 1, 1, 1)))
-                card.add_widget(MDLabel(text=f"Dias: {recurrence_data} {time_str}", theme_text_color="Custom", text_color=(0.7, 0.7, 0.7, 1), role="small"))
+            if not rows:
+                empty_card = MDCard(orientation="vertical", size_hint_y=None, height=dp(90), padding=dp(20), md_bg_color=COLORS['CARD'], radius=[dp(12)])
+                empty_card.add_widget(MDLabel(text="Nenhuma rotina encontrada no banco de dados.", halign="center", theme_text_color="Custom", text_color=COLORS['LABEL']))
+                self.routines_list_box.add_widget(empty_card)
+                return
+
+            target_keyword = self.day_map_full.get(self.selected_day, "").lower()
+            filtered_rows = []
+
+            for row in rows:
+                task = dict(zip(col_names, row))
                 
-                if timer_txt:
-                    card.add_widget(MDLabel(text=timer_txt, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1), bold=True, role="small"))
+                # Juntar o conteúdo de todas as colunas de texto para garantir que encontre o dia cadastrado onde quer que ele esteja salvo
+                combined_text = " ".join([str(val) for val in task.values() if val is not None]).lower()
                 
-                self.routine_list_layout.add_widget(card)
+                # Verificar se o dia correspondente (ex: 'segunda') está presente no registro da tarefa
+                if target_keyword in combined_text or self.selected_day.lower() in combined_text:
+                    filtered_rows.append(task)
+
+            # Fallback opcional: Se nenhuma rotina tiver o dia explícito gravado mas for rotina, exibe para não sumir
+            if not filtered_rows:
+                for row in rows:
+                    task = dict(zip(col_names, row))
+                    if task.get('is_routine') == 1 or task.get('is_routine') == '1':
+                        # Se não tem dia especificado ou se o usuário quiser ver todas as rotinas em todas as abas caso não tenham filtro estrito
+                        pass
+
+            if not filtered_rows:
+                full_name_display = self.days[[d[0] for d in self.days].index(self.selected_day)][1]
+                empty_card = MDCard(orientation="vertical", size_hint_y=None, height=dp(90), padding=dp(20), md_bg_color=COLORS['CARD'], radius=[dp(12)])
+                empty_card.add_widget(MDLabel(text=f"Nenhuma rotina encontrada para {full_name_display}.", halign="center", theme_text_color="Custom", text_color=COLORS['LABEL']))
+                self.routines_list_box.add_widget(empty_card)
+                return
+
+            for task in filtered_rows:
+                title = task.get('title', task.get('name', 'Sem título'))
+                desc = task.get('description', '')
+                time_info = task.get('time_info', task.get('days', task.get('day_of_week', task.get('date', ''))))
+                
+                full_name_display = self.days[[d[0] for d in self.days].index(self.selected_day)][1]
+                display_schedule = f"Dia: {full_name_display}" + (f" | Horário: {time_info}" if time_info else "")
+                time_remaining = self.calculate_time_remaining(full_name_display)
+
+                card = MDCard(orientation="vertical", size_hint_y=None, height=dp(115), padding=dp(15), spacing=dp(5), md_bg_color=COLORS['CARD'], radius=[dp(12)])
+                
+                card.add_widget(MDLabel(text=title, bold=True, theme_text_color="Custom", text_color=COLORS['TEXT']))
+                card.add_widget(MDLabel(text=display_schedule, theme_text_color="Custom", text_color=COLORS['LABEL'], role="small"))
+                card.add_widget(MDLabel(text=time_remaining, theme_text_color="Custom", text_color=COLORS['FOCUS'], role="small", bold=True))
+                
+                self.routines_list_box.add_widget(card)
                 
         except Exception as e:
-            logger.error(f"Erro ao carregar rotinas da semana: {e}")
+            logger.error(f"Erro ao carregar rotinas na WeekScreen: {e}")

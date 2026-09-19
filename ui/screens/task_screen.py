@@ -119,22 +119,35 @@ class TaskScreen(MDScreen):
         sec4.add_widget(time_display_box)
         self.form_layout.add_widget(sec4)
         
-        # Seção 5: Seleção de Dias da Semana (Rotina) - Usando inserção/remoção dinâmica correta para evitar vãos
+        # Seção 5: Seleção de Dias da Semana (Rotina) - Alto Contraste Aplicado
         self.sec_days = MDCard(orientation="vertical", size_hint_y=None, adaptive_height=True, padding=dp(20), spacing=dp(12), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(14)])
         self.sec_days.add_widget(MDLabel(text="Dias da Semana da Rotina (Clique para Selecionar)", bold=True, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)))
         
         days_box = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=dp(8))
         self.dias_mapeamento = {"Dom": "Domingo", "Seg": "Segunda-feira", "Ter": "Terça-feira", "Qua": "Quarta-feira", "Qui": "Quinta-feira", "Sex": "Sexta-feira", "Sáb": "Sábado"}
+        
         for d_key in ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]:
-            btn = MDButton(MDButtonText(text=d_key), style="outlined", radius=[dp(15)])
-            btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+            # Estado inicial inativo: outlined, fundo preto/escuro, texto verde menta
+            btn = MDButton(
+                MDButtonText(text=d_key, theme_text_color="Custom", text_color=(0, 0.9, 0.46, 1)), 
+                style="outlined", 
+                radius=[dp(15)]
+            )
+            btn.md_bg_color = (0.12, 0.12, 0.12, 1)
             btn.bind(on_release=lambda x, dk=d_key: self.toggle_day(dk))
             self.day_buttons[d_key] = btn
             days_box.add_widget(btn)
+            
         self.sec_days.add_widget(days_box)
         
-        # Botão Salvar
-        btn_save = MDButton(MDButtonText(text="Salvar Atividade"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(50))
+        # Botão Salvar (Com texto preto e fundo verde conforme padrão de alto contraste)
+        btn_save = MDButton(
+            MDButtonText(text="Salvar Atividade", theme_text_color="Custom", text_color=(0, 0, 0, 1)), 
+            style="filled", 
+            md_bg_color=(0, 0.9, 0.46, 1), 
+            size_hint_y=None, 
+            height=dp(50)
+        )
         btn_save.bind(on_release=self.save_task)
         self.form_layout.add_widget(btn_save)
         
@@ -233,7 +246,7 @@ class TaskScreen(MDScreen):
         controls_box.add_widget(m_box)
         content.add_widget(controls_box)
         
-        btn_confirm = MDButton(MDButtonText(text="Confirmar Horário"), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(45))
+        btn_confirm = MDButton(MDButtonText(text="Confirmar Horário", theme_text_color="Custom", text_color=(0, 0, 0, 1)), style="filled", md_bg_color=(0, 0.9, 0.46, 1), size_hint_y=None, height=dp(45))
         btn_confirm.bind(on_release=lambda x: [
             setattr(self.lbl_time_display, 'text', f"Horário selecionado: {self.selected_hour:02d}:{self.selected_minute:02d}"),
             popup.dismiss()
@@ -258,34 +271,38 @@ class TaskScreen(MDScreen):
 
     def on_routine_switch_active(self, switch, value):
         if value:
-            # Remove o calendário e insere os dias da semana no lugar exato, evitando qualquer espaço gigante
             if self.sec_date in self.form_layout.children:
                 self.form_layout.remove_widget(self.sec_date)
             if self.sec_days not in self.form_layout.children:
-                # Inserta logo abaixo do seletor de tipo (índice 1)
                 self.form_layout.add_widget(self.sec_days)
         else:
             if self.sec_days in self.form_layout.children:
                 self.form_layout.remove_widget(self.sec_days)
             if self.sec_date not in self.form_layout.children:
-                # Reinsere o calendário na posição correta
                 self.form_layout.add_widget(self.sec_date)
             self.selected_routine_days.clear()
             for d, btn in self.day_buttons.items():
                 btn.style = "outlined"
-                btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+                btn.md_bg_color = (0.12, 0.12, 0.12, 1)
+                if btn.children and hasattr(btn.children[0], 'text_color'):
+                    btn.children[0].text_color = (0, 0.9, 0.46, 1)
 
     def toggle_day(self, day_key):
         full_name = self.dias_mapeamento[day_key]
         btn = self.day_buttons[day_key]
+        
         if full_name in self.selected_routine_days:
             self.selected_routine_days.remove(full_name)
             btn.style = "outlined"
-            btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+            btn.md_bg_color = (0.12, 0.12, 0.12, 1)
+            if btn.children and hasattr(btn.children[0], 'text_color'):
+                btn.children[0].text_color = (0, 0.9, 0.46, 1)
         else:
             self.selected_routine_days.add(full_name)
             btn.style = "filled"
             btn.md_bg_color = (0, 0.9, 0.46, 1)
+            if btn.children and hasattr(btn.children[0], 'text_color'):
+                btn.children[0].text_color = (0, 0, 0, 1)
 
     def save_task(self, *args):
         title = self.title_input.text.strip()
@@ -296,7 +313,6 @@ class TaskScreen(MDScreen):
         due_date = self.selected_date if not is_routine else None
         due_time = (self.selected_hour * 60) + self.selected_minute
         
-        # Salva os dias da semana de forma compatível com a tela de rotinas
         recurrence_data = ", ".join(self.selected_routine_days) if is_routine and self.selected_routine_days else None
         
         try:
@@ -313,7 +329,9 @@ class TaskScreen(MDScreen):
             self.selected_routine_days.clear()
             for d, btn in self.day_buttons.items():
                 btn.style = "outlined"
-                btn.md_bg_color = (0.17, 0.17, 0.17, 1)
+                btn.md_bg_color = (0.12, 0.12, 0.12, 1)
+                if btn.children and hasattr(btn.children[0], 'text_color'):
+                    btn.children[0].text_color = (0, 0.9, 0.46, 1)
             self.routine_switch.active = False
             
             # Vai para o dashboard

@@ -6,6 +6,7 @@ from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.card import MDCard
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivy.metrics import dp
+from kivy.clock import Clock
 from database.connection import get_connection
 from core.logger import get_logger
 import calendar
@@ -60,17 +61,20 @@ class CalendarScreen(MDScreen):
         self.build_calendar()
 
     def on_enter(self, *args):
+        # Permite carregar a grade do mês e as tarefas simultaneamente, sem travar a UI
+        Clock.schedule_once(self.init_calendar_view, 0.1)
+
+    def init_calendar_view(self, dt=None):
         self.build_calendar()
         self.load_tasks_for_selected_date()
 
-    def get_time_left_str(self, is_routine, due_date, due_time, recurrence_data):
+    def get_time_left_str(self, is_routine, due_date, due_time, recurrence_data, now):
         try:
             if due_time is None or str(due_time).strip() == "": return ""
             t_int = int(float(str(due_time)))
             th, tm = t_int // 60, t_int % 60
         except: return ""
 
-        now = datetime.now()
         if not due_date: return ""
         try:
             target_dt = datetime.strptime(due_date, "%Y-%m-%d").replace(hour=th, minute=tm, second=0, microsecond=0)
@@ -119,10 +123,12 @@ class CalendarScreen(MDScreen):
     def select_date(self, date_str):
         self.selected_date = date_str
         self.build_calendar()
-        self.load_tasks_for_selected_date()
+        Clock.schedule_once(self.load_tasks_for_selected_date, 0)
 
-    def load_tasks_for_selected_date(self):
+    def load_tasks_for_selected_date(self, dt=None):
         self.tasks_list_layout.clear_widgets()
+        now = datetime.now()
+        
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -147,7 +153,7 @@ class CalendarScreen(MDScreen):
                     except Exception:
                         time_str = str(due_time)
 
-                timer_txt = self.get_time_left_str(is_routine, self.selected_date, due_time, None)
+                timer_txt = self.get_time_left_str(is_routine, self.selected_date, due_time, None, now)
                 
                 card = MDCard(orientation="vertical", size_hint_y=None, height=dp(95), padding=dp(15), spacing=dp(5), md_bg_color=(0.12, 0.12, 0.12, 1), radius=[dp(10)])
                 card.add_widget(MDLabel(text=title, bold=True, theme_text_color="Custom", text_color=(1, 1, 1, 1)))
